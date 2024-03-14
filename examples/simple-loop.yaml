@@ -1,0 +1,75 @@
+#apiVersion: v1
+#kind: ConfigMap
+#metadata:
+#  name: crik-browser
+#data:
+#  config.yaml: |-
+#    imageDir: /etc/checkpoint
+#    additionalPaths:
+#    - /root/.cache # webkit
+#    inotifyIncompatiblePaths:
+#    - /root/.config/glib-2.0/settings # webkit
+#    - /usr/share/zoneinfo # chrome
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crik-simple-loop
+data:
+  config.yaml: |-
+    imageDir: /etc/checkpoint
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: simple-loop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simple-loop
+  template:
+    metadata:
+      labels:
+        app: simple-loop
+    spec:
+      containers:
+        - name: main
+          image: ghcr.io/qawolf/crik:v0.1.0
+          imagePullPolicy: Never # temp
+          securityContext:
+            privileged: true
+#            capabilities:
+#              add: [ "CHECKPOINT_RESTORE", "NET_ADMIN", "SYS_ADMIN" ]
+          args:
+            - bash
+            - -c
+            - 'for ((i=0; ; i++)); do echo "Count is at $i"; sleep 1; done'
+          volumeMounts:
+            - mountPath: /etc/crik
+              name: crik-config
+            - mountPath: /etc/checkpoint
+              name: checkpoint-storage
+            - mountPath: /proc/sys/kernel/ns_last_pid
+              name: checkpoint-cap
+          env:
+            - name: KUBERNETES_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+      volumes:
+        - name: crik-config
+          configMap:
+            name: crik-simple-loop
+        - name: checkpoint-cap
+          hostPath:
+            path: /proc/sys/kernel/ns_last_pid
+            type: File
+  volumeClaimTemplates:
+    - metadata:
+        name: checkpoint-storage
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 1Gi
