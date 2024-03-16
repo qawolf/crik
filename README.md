@@ -1,12 +1,12 @@
 # Checkpoint and Restore in Kubernetes - crik
 
 `crik` is a project that aims to provide checkpoint and restore functionality for Kubernetes pods mainly targeted for
-node shutdown and restart scenarios. Under the hood, it utilizes [`criu`](https://github.com/checkpoint-restore/criu) to
-checkpoint and restore process trees.
+node shutdown and restart scenarios. It is a command wrapper that, under the hood, utilizes
+[`criu`](https://github.com/checkpoint-restore/criu) to checkpoint and restore process trees in a `Pod`.
 
 It is a work in progress and is not ready for production use.
 
-`crik` has two componenets:
+`crik` has two components:
 - `crik` - a command wrapper that executes given command and checkpoints it when SIGTERM is received and restores from
   checkpoint when image directory contains a checkpoint.
 - `manager` - a kubernetes controller that watches `Node` objects and updates its internal map of states so that `crik`
@@ -66,7 +66,7 @@ RUN curl "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4E2A48715C45AE
     && apt-get update \
     && apt-get install --no-install-recommends --yes criu iptables
 
-# Install crik \
+# Install crik
 COPY --from=ghcr.io/qawolf/crik:v0.1.0 /usr/local/bin/crik /usr/local/bin/crik
 
 # Copy your application
@@ -147,6 +147,21 @@ Build `crik`:
 ```bash
 docker build -t crik:v1 -f cmd/crik/Dockerfile .
 ```
+
+## Why not upstream?
+
+Taking checkpoints of processes and restoring them from within the container requires quite a few privileges to be given
+to the container. The best approach is to execute these operations at the container runtime level and today, container
+engines such as CRI-O and Podman do have native support for using `criu` to checkpoint and restore the whole containers
+and there is an ongoing effort to bring this functionality to Kubernetes as well. The first use case being the forensic
+analysis via checkpoints as described [here](https://kubernetes.io/blog/2023/03/10/forensic-container-analysis/).
+
+While it is the better approach, since it's such a low-level change, it's expected to take a while to be available in
+mainstream Kubernetes in an easily consumable way. For example, while taking a checkpoint is possible through `kubelet`
+API if you're using CRI-O, restoring it as another `Pod` in a different `Node` is not natively supported yet.
+
+`crik` allows you to use `criu` to checkpoint and restore a `Pod` to another `Node` today without waiting for the native
+support in Kubernetes. Once the native support is available, `crik` will utilize it under the hood.
 
 ## License
 
