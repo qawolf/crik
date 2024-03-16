@@ -1,4 +1,4 @@
-name: ci
+name: publish node-state-server
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+  REGISTRY_IMAGE: ghcr.io/qawolf/crik-node-state-server
 
 jobs:
   build:
@@ -50,7 +50,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: cmd/crik/Dockerfile
+          file: cmd/manager/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
@@ -99,3 +99,26 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+
+  publish-chart:
+    runs-on: ubuntu-latest
+    needs:
+      - merge
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+      - name: Push chart
+        uses: appany/helm-oci-chart-releaser@v0.4.1
+        with:
+          name: crik-node-state-server
+          repository: qawolf
+          tag: ${{ steps.meta.outputs.version }}
+          path: cluster/charts/crik-node-state-server
+          registry: ${{ env.REGISTRY }}
+          registry_username: ${{ github.actor }}
+          registry_password: ${{ secrets.GITHUB_TOKEN }}
