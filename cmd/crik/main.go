@@ -21,6 +21,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -60,7 +61,7 @@ type Run struct {
 
 func (r *Run) Run() error {
 	cfg, err := cexec.ReadConfiguration(r.ConfigPath)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("failed to read configuration: %w", err)
 	}
 	willRestore, err := shouldRestore(cfg)
@@ -78,14 +79,10 @@ func (r *Run) Run() error {
 		return fmt.Errorf("command is required when there is no checkpoint to restore, i.e. --image-dir is not given or empty")
 	}
 	// Make sure the PID is a high number so that it's not taken up during restore.
-	//lastPidPath := "/proc/sys/kernel/ns_last_pid"
-	//if err := os.WriteFile(lastPidPath, []byte("9000"), 0644); err != nil {
-	//	return fmt.Errorf("failed to write to %s: %w", lastPidPath, err)
-	//}
-	check := exec.Command("criu", "check", "--all")
-	check.Stderr = os.Stderr
-	check.Stdout = os.Stdout
-	_ = check.Run()
+	lastPidPath := "/proc/sys/kernel/ns_last_pid"
+	if err := os.WriteFile(lastPidPath, []byte("9000"), 0644); err != nil {
+		return fmt.Errorf("failed to write to %s: %w", lastPidPath, err)
+	}
 
 	cmd := exec.Command(r.Args[0], r.Args[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{

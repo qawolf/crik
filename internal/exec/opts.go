@@ -145,6 +145,10 @@ func GetExternalDirectoriesForRestore() []string {
 
 func CopyDir(src, dst string) error {
 	return filepath.WalkDir(src, func(srcPath string, d os.DirEntry, err error) error {
+		// If the file/folder doesn't exist, we don't need to copy it.
+		if os.IsNotExist(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
