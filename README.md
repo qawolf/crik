@@ -4,6 +4,9 @@
 node shutdown and restart scenarios. It is a command wrapper that, under the hood, utilizes
 [`criu`](https://github.com/checkpoint-restore/criu) to checkpoint and restore process trees in a `Pod`.
 
+> `crik` is first revealed at KubeCon EU 2024: 
+> [The Party Must Go on - Resume Pods After Spot Instance Shut Down - Muvaffak Onuş, QA Wolf](https://kccnceu2024.sched.com/event/1YeP3)
+
 It is a work in progress and is not ready for production use.
 
 `crik` has two components:

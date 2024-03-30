@@ -36,7 +36,7 @@ spec:
       containers:
         - name: main
           image: ghcr.io/qawolf/crik:v0.1.0
-          imagePullPolicy: Never # temp
+          imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
 #            capabilities:
