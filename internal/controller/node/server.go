@@ -45,7 +45,8 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		nodes: map[string]NodeState{},
+		nodes:   map[string]NodeState{},
+		RWMutex: &sync.RWMutex{},
 	}
 }
 
