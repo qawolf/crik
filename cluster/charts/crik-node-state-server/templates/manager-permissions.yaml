@@ -38,4 +38,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: crik-node-state-server
-    namespace: default
+    namespace: {{ .Release.Namespace }}
