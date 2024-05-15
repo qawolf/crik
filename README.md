@@ -72,7 +72,7 @@ RUN curl "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4E2A48715C45AE
     && apt-get install --no-install-recommends --yes criu iptables
 
 # Install crik
-COPY --from=ghcr.io/qawolf/crik:v0.1.0 /usr/local/bin/crik /usr/local/bin/crik
+COPY --from=ghcr.io/qawolf/crik/crik:v0.1.2 /usr/local/bin/crik /usr/local/bin/crik
 
 # Copy your application
 COPY entrypoint.sh /entrypoint.sh
@@ -121,7 +121,7 @@ to the cloud provider's API to check the node's state in the future.
 Deploy the controller:
 
 ```bash
-helm install crik charts/node-state-server
+helm upgrade --install node-state-server oci://ghcr.io/qawolf/crik/charts/node-state-server --version 0.1.2
 ```
 
 Make sure to include the URL of the server in `crik`'s configuration mounted to your `Pod`.
