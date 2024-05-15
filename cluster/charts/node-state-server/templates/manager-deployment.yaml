@@ -32,13 +32,9 @@ spec:
       serviceAccountName: crik-node-state-server
       securityContext:
         runAsNonRoot: true
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: main
           image: "{{ .Values.nodeStateServer.image.repository }}:{{ .Values.nodeStateServer.image.tag }}"
-          command:
-            - /manager
           args:
             - --metrics-port=8080
             - --health-probes-port=8081
