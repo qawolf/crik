@@ -36,14 +36,14 @@ spec:
           type: RuntimeDefault
       containers:
         - name: main
-          image: {{ .Values.nodeStateServer.image.repository }}:{{ .Values.nodeStateServer.image.tag }}
+          image: "{{ .Values.nodeStateServer.image.repository }}:{{ .Values.nodeStateServer.image.tag }}"
           command:
             - /manager
           args:
             - --metrics-port=8080
             - --health-probes-port=8081
             - --port=9376
-            {{- if .Values.playgroundController.debug }}
+            {{- if .Values.nodeStateServer.debug }}
             - --debug
             {{- end }}
           ports:
