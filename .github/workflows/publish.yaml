@@ -1,10 +1,10 @@
-name: Build and Push Images
+name: Publish
 on:
   push:
     branches:
       - main
     tags:
-      - "*"
+      - "v*"
 
 env:
   GO_VERSION: 1.22.2
@@ -12,6 +12,8 @@ env:
 jobs:
   version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,14 +29,15 @@ jobs:
             echo "No tags found"
             VERSION="$(echo "v0.0.0-$(git rev-list HEAD --count)-$(git describe --dirty --always)" | sed 's/-/./2' | sed 's/-/./2' | sed 's/-/./2')"
           else
-            echo "Tags found: $(git tag)"
+            echo "Tags found:\n$(git tag)"
             VERSION="$(git describe --dirty --always --tags --match 'v*' | sed 's|.*/||' | sed 's/-/./2' | sed 's/-/./2' | sed 's/-/./2')"
           fi
           echo "Version is ${VERSION}"
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-  images:
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+  image:
     runs-on: ubuntu-latest
-    needs: version
+    needs:
+      - version
     permissions:
       packages: write
       contents: read
@@ -100,7 +103,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,format=short,prefix=
-            ${{ steps.version.outputs.VERSION }}
+            ${{ needs.version.outputs.VERSION }}
       - name: Build and push
         id: push
         uses: docker/build-push-action@v5
@@ -125,7 +128,8 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     needs:
-      - images
+      - image
+      - version
     strategy:
       matrix:
         chart: [node-state-server]
@@ -141,30 +145,26 @@ jobs:
       - name: Push the chart
         id: push
         env:
-          VERSION: ${{ steps.version.outputs.VERSION }}
+          VERSION: ${{ needs.version.outputs.VERSION }}
         run: |
+          set -e
           # Helm doesn't accept v prefix in version.
-          TAG=$(echo ${{ steps.version.outputs.VERSION }} | cut -d'v' -f2)
+          CHART_TAG=$(echo ${VERSION} | cut -d'v' -f2)
           if [ "${{ matrix.chart }}" == "node-state-server" ]; then
             yq -i ".nodeStateServer.image.tag = \"${VERSION}\"" cluster/charts/${{ matrix.chart }}/values.yaml
             echo "Final values.yaml"
             cat cluster/charts/${{ matrix.chart }}/values.yaml
           fi
-          helm dependency update cluster/charts/${{ matrix.chart }}
-          helm package cluster/charts/${{ matrix.chart }} --dependency-update --version=${VERSION} --app-version=${VERSION}
-          OUT=$(set +e; helm push ${{ matrix.chart }}-${VERSION}.tgz oci://ghcr.io/qawolf/crik/charts 2>&1)
-          EXIT_CODE=$?
-          set -e
-          echo "${OUT}"
-          if [[ $EXIT_STATUS -ne 0 ]]; then
-              exit $EXIT_STATUS
-          fi
-          DIGEST=$(echo ${OUT}| sed -n 's/.*sha256:\([^ ]*\).*/sha256:\1/p')
+          helm package cluster/charts/${{ matrix.chart }} --dependency-update --version=${CHART_TAG} --app-version=${CHART_TAG}
+          helm push ${{ matrix.chart }}-${CHART_TAG}.tgz oci://ghcr.io/qawolf/crik/charts 2>&1 | tee push.log
+          DIGEST=$(cat push.log | sed -n 's/.*sha256:\([^ ]*\).*/sha256:\1/p')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Attest
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-name: ghcr.io/qawolf/crik/charts/${{ matrix.chart }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+      # Attestation is not yet available for OCI images.
+      #
+      # - name: Attest
+      #   uses: actions/attest-build-provenance@v1
+      #   with:
+      #     subject-name: ghcr.io/qawolf/crik/charts/${{ matrix.chart }}
+      #     subject-digest: ${{ steps.push.outputs.digest }}
+      #     push-to-registry: true
