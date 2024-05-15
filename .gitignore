@@ -26,3 +26,5 @@ go.work
 *.swp
 *.swo
 *~
+
+.work

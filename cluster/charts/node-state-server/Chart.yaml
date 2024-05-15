@@ -1,4 +1,4 @@
 apiVersion: v2
-name: crik-node-state-server
+name: node-state-server
 version: 0.1.0
 description: A Helm chart for the Node State Server used by crik.

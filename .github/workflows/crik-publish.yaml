@@ -1,101 +1,170 @@
-name: publish crik
-
+name: Build and Push Images
 on:
   push:
     branches:
-      - "main"
+      - main
     tags:
-      - "v*"
+      - "*"
 
 env:
-  REGISTRY: ghcr.io
-  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+  GO_VERSION: 1.22.2
 
 jobs:
-  build:
+  version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
     steps:
-      - name: Prepare
-        run: |
-          platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY_IMAGE }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+          fetch-tags: true
+      - name: Fetch history for all tags
+        run: git fetch --prune --unshallow
+      - name: Calculate version
+        id: version
+        run: |
+          VERSION="v0.0.0"
+          if [ -z "$(git tag)" ]; then
+            echo "No tags found"
+            VERSION="$(echo "v0.0.0-$(git rev-list HEAD --count)-$(git describe --dirty --always)" | sed 's/-/./2' | sed 's/-/./2' | sed 's/-/./2')"
+          else
+            echo "Tags found: $(git tag)"
+            VERSION="$(git describe --dirty --always --tags --match 'v*' | sed 's|.*/||' | sed 's/-/./2' | sed 's/-/./2' | sed 's/-/./2')"
+          fi
+          echo "Version is ${VERSION}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+  images:
+    runs-on: ubuntu-latest
+    needs: version
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        app: [crik, node-state-server]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Find the Go Environment
+        id: go
+        run: |
+          echo "cache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
+          echo "mod=$(go env GOMODCACHE)" >> $GITHUB_OUTPUT
+
+      - name: Cache Go Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go.outputs.mod }}
+          key: mod-cache-${{ hashFiles('**/go.sum') }}
+          restore-keys: mod-cache-
+
+      - name: Cache Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go.outputs.cache }}
+          key: build-cache-${{ matrix.app }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: build-cache-${{ matrix.app }}-
+
+      - name: Check if code-gen changes anything
+        run: |
+          go generate ./...
+          git diff --exit-code && echo "generated code is up to date" || (echo "go generate resulted in changes" && git diff && exit 1)
+
+      - name: Build
+        env:
+          PLATFORMS: linux/amd64,linux/arm64
+        run: |
+          for platform in $(echo $PLATFORMS | tr "," "\n"); do
+            export os=$(echo $platform | cut -d'/' -f1)
+            export arch=$(echo $platform | cut -d'/' -f2)
+            echo "Building for $os/$arch"
+            CGO_ENABLED=0 GOOS=${os} GOARCH=${arch} go build -o .work/bin/${{ matrix.app }}-${os}-${arch} cmd/${{ matrix.app }}/main.go &
+          done
+          wait
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Log in to the Github Container Registry
-        uses: docker/login-action@v3
+      - name: Login to Github Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Generate metadata for images
+        uses: docker/metadata-action@v5
+        id: metadata
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push by digest
-        id: build
+          images: ghcr.io/qawolf/crik/${{ matrix.app }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short,prefix=
+            ${{ steps.version.outputs.VERSION }}
+      - name: Build and push
+        id: push
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: cmd/crik/Dockerfile
-          platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
+          file: cmd/${{ matrix.app }}/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
 
-  merge:
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/qawolf/crik/${{ matrix.app }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+  chart:
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     needs:
-      - build
+      - images
+    strategy:
+      matrix:
+        chart: [node-state-server]
     steps:
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY_IMAGE }}
-      - name: Log in to the Github Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Create manifest list and push
-        working-directory: /tmp/digests
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Install yq
+        uses: dcarbone/install-yq-action@v1.1.1
+      - name: Push the chart
+        id: push
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+          # Helm doesn't accept v prefix in version.
+          TAG=$(echo ${{ steps.version.outputs.VERSION }} | cut -d'v' -f2)
+          if [ "${{ matrix.chart }}" == "node-state-server" ]; then
+            yq -i ".nodeStateServer.image.tag = \"${VERSION}\"" cluster/charts/${{ matrix.chart }}/values.yaml
+            echo "Final values.yaml"
+            cat cluster/charts/${{ matrix.chart }}/values.yaml
+          fi
+          helm dependency update cluster/charts/${{ matrix.chart }}
+          helm package cluster/charts/${{ matrix.chart }} --dependency-update --version=${VERSION} --app-version=${VERSION}
+          OUT=$(set +e; helm push ${{ matrix.chart }}-${VERSION}.tgz oci://ghcr.io/qawolf/crik/charts 2>&1)
+          EXIT_CODE=$?
+          set -e
+          echo "${OUT}"
+          if [[ $EXIT_STATUS -ne 0 ]]; then
+              exit $EXIT_STATUS
+          fi
+          DIGEST=$(echo ${OUT}| sed -n 's/.*sha256:\([^ ]*\).*/sha256:\1/p')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/qawolf/crik/charts/${{ matrix.chart }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
